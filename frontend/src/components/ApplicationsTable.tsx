@@ -18,7 +18,7 @@ export function ApplicationsTable() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch("http://13.127.91.178:5000/api/applications")
+    fetch("/api/applications")
       .then(r => r.json())
       .then((data: any) => {
         setApps(data.applications || [])

@@ -21,12 +21,12 @@ export interface Lead {
   rank: number
 }
 
-// ponytail: direct API URL for Docker deployment
-const API_URL = "http://13.127.91.178:5000"
+// ponytail: API_URL comes from Vite proxy in dev, hardcode for production
+const API_URL = "/leads"
 
 export async function fetchLeads(): Promise<Lead[]> {
   try {
-    const resp = await fetch(`${API_URL}/leads`)
+    const resp = await fetch(`${API_URL}`)
     if (!resp.ok) throw new Error(`API error: ${resp.status}`)
     return await resp.json()
   } catch (e) {

@@ -30,7 +30,10 @@ from services.repayment_engine import (
 )
 from services.lead_scorer import LeadScorer
 from services.product_recommender import ProductRecommender
-from services.bank_statement_analyzer import parse_statement, extract_income, calculate_cashflow
+from services.bank_statement_analyzer import (
+    parse_statement, extract_income, calculate_cashflow,
+    generate_demo_transactions, parse_transactions, extract_features,
+)
 from services.behavioral_scorer import track_event, get_behavior_score, get_signals as get_customer_signals
 from services.conversion_tracker import track_stage, get_funnel_metrics, get_conversion_rate
 from services.income_verifier import verify_income, ConfidenceLevel
@@ -337,6 +340,33 @@ def score():
         except ValueError:
             max_loan = 0  # FOIR gate failed
 
+        # Bank statement features (optional)
+        bank_analysis = data.get("bank_analysis")
+        bank_verified = False
+        bank_features = {}
+
+        # Direct transactions override: parse and extract features
+        transactions = data.get("transactions")
+        if transactions:
+            try:
+                summary = parse_transactions(transactions)
+                bank_features = extract_features(summary)
+                bank_verified = True
+                # Use extracted features if not already in intent_features
+                if not data.get("intent_features"):
+                    intent_features = bank_features
+                # ponytail: read stability_score and liquidity_stress from summary (field names)
+                stability_score = getattr(summary, "income_stability_score", 0)
+                liquidity_stress = getattr(summary, "liquidity_stress", 0)
+                bank_analysis = {
+                    "intent_features": bank_features,
+                    "stability_score": stability_score,
+                    "liquidity_stress": liquidity_stress,
+                    "savings_ratio": getattr(summary, "savings_ratio", 0),
+                }
+            except Exception as e:
+                logger.warning(f"Transaction parse failed: {e}")
+
         # Intent prediction (if transaction data with intent features provided)
         c = Container.get()
         intent_features = data.get("intent_features", {})  # {medical: 0.8, wedding: 0.3, ...}
@@ -357,13 +387,17 @@ def score():
             }
 
         # Lead scoring
-        capacity_score = min(dti * 100, 100) if dti <= 1 else 0
+        capacity_score = max(0, min(100, (0.50 - dti) / 0.50 * 100)) if dti <= 0.50 else 0
         credit_score = data.get("credit_score", 70.0)
         relationship_score = data.get("relationship_score", 60.0)
         
         # ponytail: use max intent as aggregate (not just personal)
         max_intent = max(intent_scores.values()) if intent_scores else 50.0
-        
+
+        # ponytail: reject client-supplied bank_analysis (spoofable)
+        if bank_analysis and not transactions:
+            logger.warning(f"bank_analysis received without transactions for {customer_id} - ignored")
+
         lead_score = c.lead_scorer.score(
             intent=max_intent,
             capacity=capacity_score,
@@ -384,7 +418,7 @@ def score():
             relationship_score,
         )
 
-        # Product recommendation
+        # Product recommendation (get loan type first, then recalculate max_loan with correct tenure)
         intent_for_rec = {f"{k}_loan": v / 100 for k, v in intent_scores.items()}
         recommendation = c.product_recommender.recommend(
             intent_scores=intent_for_rec,
@@ -392,8 +426,30 @@ def score():
             affordable_emi=affordable_emi,
         )
 
+        # Apply per-product tenures: Home=20yr, Auto=7yr, Personal=5yr, Mortgage=15yr
+        loan_type = recommendation.get("loan_type", "Personal Loan").lower()
+        if "home" in loan_type:
+            tenure_years = 20
+        elif "auto" in loan_type:
+            tenure_years = 7
+        elif "mortgage" in loan_type:
+            tenure_years = 15
+        else:
+            tenure_years = 5  # Personal
+
+        # Recalculate max_loan with correct tenure
+        try:
+            max_loan = compute_max_loan(affordable_emi, tenure_years=tenure_years, dti=dti)
+        except ValueError:
+            max_loan = 0  # FOIR gate failed
+
+        recommendation["tenure_years"] = tenure_years
+        recommendation["max_loan"] = round(max_loan, 0)
+
         return jsonify({
             "customer_id": customer_id,
+            "bank_verified": bank_verified,
+            "bank_analysis": bank_analysis if bank_verified else None,
             "intent_scores": intent_scores,
             "lead_score": round(lead_score, 1),
             "priority": priority,
@@ -467,9 +523,9 @@ def batch():
         }
 
         # Lead score
-        capacity_score = min(dti * 100, 100) if dti <= 1 else 0
+        capacity_score = max(0, min(100, (0.50 - dti) / 0.50 * 100)) if dti <= 0.50 else 0
         lead_score = c.lead_scorer.score(
-            intent=intent_scores["personal"],
+            intent=max(intent_scores.values()),
             capacity=capacity_score,
             credit=credit_score,
             relationship=relationship_score,
@@ -503,32 +559,79 @@ def batch():
 # New Feature Endpoints
 # =============================================================================
 
+@app.post("/api/bank-statement/generate")
+def generate_bank_statement():
+    """Generate demo transactions from income parameters."""
+    try:
+        data = request.get_json() or {}
+        monthly_income = data.get("monthly_income", 50000)
+        num_days = data.get("num_days", 90)
+
+        transactions = generate_demo_transactions(monthly_income, num_days)
+        summary = parse_transactions(transactions)
+
+        return jsonify({
+            "transactions": transactions,
+            "summary": {
+                "total_credits": summary.total_credits,
+                "total_debits": summary.total_debits,
+                "savings_ratio": summary.savings_ratio,
+                "emi_count": summary.emi_count,
+                "avg_daily_spend": summary.avg_daily_spend,
+                "liquidity_stress": summary.liquidity_stress,
+            }
+        })
+    except Exception as e:
+        logger.error(f"Bank statement generate error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.post("/api/bank-statement/parse")
 def parse_bank_statement():
-    """Parse bank statement PDF/CSV and extract income analysis."""
+    """Parse submitted transactions and return analysis + extracted features."""
     try:
-        if 'file' not in request.files:
-            return jsonify({"error": "File required"}), 400
-        
-        file = request.files['file']
-        content = file.stream.read().decode('utf-8', errors='ignore')
-        file_type = 'csv' if file.filename.endswith('.csv') else 'txt'
-        
-        result = parse_statement(content, file_type)
-        
+        data = request.get_json() or {}
+        transactions = data.get("transactions", [])
+        monthly_inflow = data.get("monthly_inflow", 50000)
+
+        if not transactions:
+            # ponytail: fall back to file upload if no transactions in body
+            if 'file' in request.files:
+                file = request.files['file']
+                content = file.stream.read().decode('utf-8', errors='ignore')
+                file_type = 'csv' if file.filename.endswith('.csv') else 'txt'
+                result = parse_statement(content, file_type)
+                return jsonify({
+                    "total_credits": result.total_credits,
+                    "total_debits": result.total_debits,
+                    "avg_monthly_inflow": round(result.avg_monthly_inflow, 2),
+                    "detected_emis": result.detected_emis,
+                    "transaction_count": result.transaction_count,
+                    "analysis": {
+                        "monthly_inflow": round(result.analysis.monthly_inflow, 2),
+                        "monthly_outflow": round(result.analysis.monthly_outflow, 2),
+                        "net_cashflow": round(result.analysis.net_cashflow, 2),
+                        "income_stability_score": round(result.analysis.income_stability_score, 1),
+                        "income_sources": result.analysis.income_sources
+                    }
+                })
+            return jsonify({"error": "No transactions or file provided"}), 400
+
+        summary = parse_transactions(transactions)
+        features = extract_features(summary)
+
         return jsonify({
-            "total_credits": result.total_credits,
-            "total_debits": result.total_debits,
-            "avg_monthly_inflow": round(result.avg_monthly_inflow, 2),
-            "detected_emis": result.detected_emis,
-            "transaction_count": result.transaction_count,
-            "analysis": {
-                "monthly_inflow": round(result.analysis.monthly_inflow, 2),
-                "monthly_outflow": round(result.analysis.monthly_outflow, 2),
-                "net_cashflow": round(result.analysis.net_cashflow, 2),
-                "income_stability_score": round(result.analysis.income_stability_score, 1),
-                "income_sources": result.analysis.income_sources
-            }
+            "total_credits": summary.total_credits,
+            "total_debits": summary.total_debits,
+            "savings_ratio": summary.savings_ratio,
+            "emi_count": summary.emi_count,
+            "stability_score": summary.income_stability_score,
+            "avg_daily_spend": summary.avg_daily_spend,
+            "liquidity_stress": summary.liquidity_stress,
+            "detected_emis": summary.detected_emis,
+            "income_sources": summary.income_sources,
+            "transaction_count": summary.transaction_count,
+            "intent_features": features,
         })
     except Exception as e:
         logger.error(f"Bank statement parse error: {e}")
@@ -674,34 +777,97 @@ def bulk_prospects():
                 "monthly_inflow": p.get("monthly_inflow", 50000),
                 "fixed_obligations": p.get("fixed_obligations", 0),
                 "credit_score": p.get("credit_score", 70),
-                "status": "new"
+                "status": "new",
+                "bank_verified": False,
+                "bank_analysis": None,
             }
             added += 1
-            
+
+            # ponytail: bank analysis augments scoring
+            bank_analysis = p.get("bank_analysis")
+            bank_features = {}
+            if bank_analysis:
+                PROSPECTS[cid]["bank_verified"] = True
+                PROSPECTS[cid]["bank_analysis"] = bank_analysis
+                intent_feats = bank_analysis.get("intent_features", {}) or {}
+                stability = intent_feats.get("income_stability", 50) / 100  # 0-1
+                liquidity_stress = intent_feats.get("liquidity_stress", 50) / 100  # 0-1
+                savings = intent_feats.get("savings_ratio", 0) / 100
+                # stability bonus: +10 pts for perfect stability, 0 for 0
+                stability_bonus = stability * 10
+                # liquidity stress reduces capacity effectively (lower stress = more capacity)
+                lc_multiplier = 1.0 - (liquidity_stress * 0.15)  # up to 15% capacity boost
+                bank_features = {
+                    "stability_bonus": stability_bonus,
+                    "lc_multiplier": lc_multiplier,
+                    "savings_ratio": savings,
+                }
+
             try:
                 monthly = p.get("monthly_inflow", 50000)
                 fixed = p.get("fixed_obligations", 0)
                 consistency = p.get("consistency", 0.85)
                 credit = p.get("credit_score", 70)
-                
+
                 stable = compute_stable_income(monthly, consistency)
                 disposable = compute_disposable_income(stable, fixed)
                 emi = compute_affordable_emi(disposable)
                 max_loan = compute_max_loan(emi)
                 dti = compute_dti(emi, stable)
-                capacity = min(dti * 100, 100) if dti <= 1 else 0
-                
+                capacity = max(0, min(100, (0.50 - dti) / 0.50 * 100)) if dti <= 0.50 else 0
+
+                # ponytail: apply bank analysis multiplier to capacity
+                if bank_features:
+                    capacity = capacity * bank_features["lc_multiplier"]
+                    capacity = max(0, min(100, capacity))
+
+                # Derive intent from income band and credit score (rule-based, realistic)
+                monthly_income = monthly
+                credit_score_norm = credit
+                income_band = monthly_income / 50000  # 0-1+ scale
+                credit_norm = credit_score_norm / 100  # 0-1
+                intent = int(min(95, max(20, 50 + income_band * 25 + credit_norm * 20 - 10)))  # 20-95 range
+
+                # ponytail: add stability bonus to intent
+                if bank_features:
+                    intent = min(95, intent + bank_features["stability_bonus"])
+
+                relationship = 60
                 lead_score = c.lead_scorer.score(
-                    intent=50, capacity=capacity, credit=credit, relationship=60
+                    intent=intent, capacity=capacity, credit=credit, relationship=relationship
                 )
+
+                # Store more fields via explain and recommend
+                confidence = c.lead_scorer.confidence(intent, capacity, credit, relationship)
+                reasons = c.lead_scorer.explain(intent, capacity, credit, relationship)
+                intent_for_rec = {
+                    "personal_loan": intent / 100,
+                    "home_loan": intent / 100,
+                    "auto_loan": intent / 100,
+                    "mortgage_loan": intent / 100,
+                }
+                rec = c.product_recommender.recommend(intent_scores=intent_for_rec, repayment_capacity=max_loan, affordable_emi=emi)
+
                 PROSPECTS[cid]["lead_score"] = round(lead_score, 1)
                 PROSPECTS[cid]["repayment_capacity"] = round(max_loan, 0)
                 PROSPECTS[cid]["priority"] = c.lead_scorer.prioritize(lead_score)
+                PROSPECTS[cid]["intent_scores"] = {"personal": intent, "home": intent, "auto": intent, "mortgage": intent}
+                PROSPECTS[cid]["recommended_product"] = rec.get("loan_type", "Personal Loan")
+                PROSPECTS[cid]["confidence"] = round(confidence, 2)
+                PROSPECTS[cid]["reasons"] = reasons
+                PROSPECTS[cid]["loan_type"] = rec.get("loan_type", "Personal Loan")
+                PROSPECTS[cid]["suggested_loan_amount"] = round(max_loan, 0)
                 scored += 1
             except Exception as e:
                 logger.warning(f"Score failed: {e}")
         
-        return jsonify({"added": added, "scored": scored, "total": len(PROSPECTS)})
+        scored_results = []
+        for p in prospects_list:
+            pid = p.get('email') or p.get('customer_id') or None
+            if pid and pid in PROSPECTS:
+                scored_results.append(PROSPECTS[pid])
+
+        return jsonify({"added": added, "scored": scored, "total": len(PROSPECTS), "results": scored_results})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -789,7 +955,7 @@ def leads():
         emi = compute_affordable_emi(disposable)
         max_loan = compute_max_loan(emi)
         dti = compute_dti(emi, stable)
-        capacity_score = min(dti * 100, 100) if dti <= 1 else 0
+        capacity_score = max(0, min(100, (0.50 - dti) / 0.50 * 100)) if dti <= 0.50 else 0
         
         intent = {
             "personal": random.randint(30, 80),
@@ -798,8 +964,9 @@ def leads():
             "mortgage": random.randint(15, 50),
         }
         
+        max_intent = max(intent["personal"], intent["home"], intent["auto"], intent["mortgage"])
         lead_score = c.lead_scorer.score(
-            intent=intent["personal"],
+            intent=max_intent,
             capacity=capacity_score,
             credit=credit,
             relationship=random.randint(50, 80),
@@ -873,17 +1040,17 @@ if __name__ == "__main__":
     import json
 
     print("=== Flask API Self-Check ===")
-    
+
     # Initialize container
     c = Container.get()
-    print(f"✓ Container initialized: intent_model trained={c.intent_model.models['personal'] is not None}")
+    print(f"[OK] Container initialized: intent_model trained={c.intent_model.models['personal'] is not None}")
 
     # Test /score endpoint logic
     with app.test_client() as client:
         # Health check
         resp = client.get("/health")
         assert resp.status_code == 200
-        print(f"✓ GET /health: {resp.json}")
+        print(f"[OK] GET /health: {resp.json}")
 
         # Single score
         sample_request = {
@@ -911,7 +1078,7 @@ if __name__ == "__main__":
         resp = client.post("/score", json=sample_request)
         assert resp.status_code == 200
         result = resp.json
-        print(f"✓ POST /score: lead_score={result['lead_score']}, priority={result['priority']}")
+        print(f"[OK] POST /score: lead_score={result['lead_score']}, priority={result['priority']}")
         
         # Verify structure
         assert "customer_id" in result
@@ -933,7 +1100,7 @@ C003,35000,0.75,10000,65,55
         )
         assert resp.status_code == 200
         batch_result = resp.json
-        print(f"✓ POST /batch: processed={batch_result['processed']}, top_leads={len(batch_result['top_leads'])}")
+        print(f"[OK] POST /batch: processed={batch_result['processed']}, top_leads={len(batch_result['top_leads'])}")
         assert batch_result["processed"] == 3
         assert len(batch_result["top_leads"]) <= 10
 
@@ -946,5 +1113,5 @@ C003,35000,0.75,10000,65,55
     print(f"\n{json.dumps(output)}")
     
     # Start server
-    print("\n✓ Starting Flask server on http://0.0.0.0:5000")
+    print("\n[OK] Starting Flask server on http://0.0.0.0:5000")
     app.run(host="0.0.0.0", port=5000, debug=False)

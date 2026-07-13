@@ -1,104 +1,69 @@
 export function HomePage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900">
+    <div className="min-h-screen flex flex-col bg-white">
+
       {/* Header */}
-      <header className="border-b border-white/10">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <header className="bg-blue-900 text-white">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-3xl">🏦</span>
+            <div className="bg-white text-blue-900 font-bold text-sm px-2 py-1 rounded">IDBI</div>
             <div>
-              <h1 className="text-xl font-bold text-white">IDBI Bank</h1>
-              <p className="text-xs text-blue-200">Prospect Assist AI</p>
+              <h1 className="text-lg font-bold">IDBI Bank</h1>
+              <p className="text-blue-200 text-xs">Lead Scoring Platform</p>
             </div>
           </div>
-          <div className="flex gap-4">
-            <a href="/officer/login" className="text-white/80 hover:text-white text-sm">Officer</a>
-            <a href="/manager/login" className="text-white/80 hover:text-white text-sm">Prospect Manager</a>
+          <div className="flex gap-6 text-sm text-blue-200">
+            <a href="/officer/login" className="hover:text-white transition">Officer</a>
+            <a href="/manager/login" className="hover:text-white transition">Manager</a>
           </div>
         </div>
       </header>
 
       {/* Hero */}
-      <main className="max-w-7xl mx-auto px-4 py-20">
-        <div className="text-center mb-16">
-          <h2 className="text-5xl font-bold text-white mb-4">
-            Prospect Assist AI
-          </h2>
-          <p className="text-xl text-blue-200 max-w-2xl mx-auto">
-            Score leads, recommend products, prioritize prospects with ML
-          </p>
-        </div>
-
-        {/* Two Portals */}
-        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+      <main className="flex-1 flex items-center justify-center px-6">
+        <div className="max-w-3xl mx-auto w-full">
+          {/* Two Portals */}
+          <div className="grid md:grid-cols-2 gap-8">
           {/* Officer */}
-          <div className="bg-white/10 backdrop-blur rounded-2xl p-8 border border-white/20 hover:bg-white/15 transition">
-            <div className="text-5xl mb-4">👔</div>
-            <h3 className="text-2xl font-bold text-white mb-2">Officer Dashboard</h3>
-            <p className="text-blue-200 mb-6">
-              View scored prospects, priorities, repayment capacity, and product recommendations
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-8 text-left">
+            <h3 className="text-xl font-bold text-blue-900 mb-2">Officer Dashboard</h3>
+            <p className="text-gray-600 text-sm mb-6">
+              View scored prospects, priorities, repayment capacity, and product recommendations.
             </p>
-            <ul className="text-white/80 mb-6 space-y-2">
-              <li>✓ Dual-engine scoring</li>
-              <li>✓ Priority queue</li>
-              <li>✓ Product match</li>
-              <li>✓ Repayment capacity</li>
+            <ul className="text-gray-700 text-sm space-y-2 mb-6">
+              <li>Dual-engine AI scoring</li>
+              <li>Priority queue (High/Medium/Low)</li>
+              <li>Product match per prospect</li>
+              <li>Repayment capacity breakdown</li>
             </ul>
-            <a
-              href="/officer/login"
-              className="block text-center bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 px-6 rounded-lg transition"
-            >
-              Officer Login
+            <a href="/officer/login" className="block text-center bg-blue-900 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg transition">
+              Open Dashboard
             </a>
           </div>
 
           {/* Manager */}
-          <div className="bg-white/10 backdrop-blur rounded-2xl p-8 border border-white/20 hover:bg-white/15 transition">
-            <div className="text-5xl mb-4">📊</div>
-            <h3 className="text-2xl font-bold text-white mb-2">Prospect Manager</h3>
-            <p className="text-blue-200 mb-6">
-              Add prospects in bulk, input ML scoring data, and track submissions
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-8 text-left">
+            <h3 className="text-xl font-bold text-blue-900 mb-2">Prospect Manager</h3>
+            <p className="text-gray-600 text-sm mb-6">
+              Add prospects in bulk, input scoring data, and track loan applications.
             </p>
-            <ul className="text-white/80 mb-6 space-y-2">
-              <li>✓ Bulk upload</li>
-              <li>✓ Income & obligations</li>
-              <li>✓ Credit score</li>
-              <li>✓ Auto-scoring</li>
+            <ul className="text-gray-700 text-sm space-y-2 mb-6">
+              <li>Bulk prospect upload</li>
+              <li>Income & obligations input</li>
+              <li>Credit score entry</li>
+              <li>Application tracking</li>
             </ul>
-            <a
-              href="/manager/login"
-              className="block text-center bg-green-600 hover:bg-green-500 text-white font-semibold py-3 px-6 rounded-lg transition"
-            >
-              Manager Login
+            <a href="/manager/login" className="block text-center bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-lg transition">
+              Open Manager Portal
             </a>
           </div>
         </div>
-
-        {/* Features */}
-        <div className="mt-20 grid md:grid-cols-3 gap-6 text-center">
-          <div className="p-6">
-            <div className="text-4xl mb-2">🤖</div>
-            <h4 className="text-lg font-semibold text-white mb-1">AI Scoring</h4>
-            <p className="text-blue-200 text-sm">ML models predict loan intent & capacity</p>
-          </div>
-          <div className="p-6">
-            <div className="text-4xl mb-2">⚡</div>
-            <h4 className="text-lg font-semibold text-white mb-1">Instant Decisions</h4>
-            <p className="text-blue-200 text-sm">Real-time eligibility assessment</p>
-          </div>
-          <div className="p-6">
-            <div className="text-4xl mb-2">🔒</div>
-            <h4 className="text-lg font-semibold text-white mb-1">Secure</h4>
-            <p className="text-blue-200 text-sm">Bank-grade data protection</p>
-          </div>
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-white/10 mt-20">
-        <div className="max-w-7xl mx-auto px-4 py-6 text-center text-blue-200 text-sm">
-          <p>IDBI Innovate 2026 — Hackathon Project</p>
-        </div>
+      <footer className="bg-blue-900 text-blue-200 text-center py-6 text-sm">
+        IDBI Innovate 2026 — Prospect Assist AI — Hackathon Project
       </footer>
     </div>
   )

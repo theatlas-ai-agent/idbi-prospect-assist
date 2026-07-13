@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input'
 import { Button } from '../components/ui/button'
 
-const API_URL = 'http://13.127.91.178:5000'
+const API_URL = '/api'
 
 export function CustomerLoginPage() {
   const [formData, setFormData] = useState({ email: '', password: '' })
@@ -41,7 +41,7 @@ export function CustomerLoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-white flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="text-4xl mb-2">👤</div>
@@ -78,9 +78,9 @@ export function CustomerLoginPage() {
 
             {/* ponytail: demo creds inline, no config file */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
-              <p className="font-medium text-blue-700 mb-1">Demo Account:</p>
-              <p className="text-blue-600">Email: <code className="bg-white px-1 rounded">demo@test.com</code></p>
-              <p className="text-blue-600">Password: <code className="bg-white px-1 rounded">demo1234</code></p>
+              <p className="font-medium text-blue-900 mb-1">Demo Account:</p>
+              <p className="text-blue-700">Email: <code className="bg-white px-1 rounded">demo@test.com</code></p>
+              <p className="text-blue-700">Password: <code className="bg-white px-1 rounded">demo1234</code></p>
             </div>
 
             <p className="text-center text-sm text-gray-500">

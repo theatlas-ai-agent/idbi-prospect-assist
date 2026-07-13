@@ -9,4 +9,13 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    proxy: {
+      '/score': 'http://localhost:5000',
+      '/batch': 'http://localhost:5000',
+      '/leads': 'http://localhost:5000',
+      '/health': 'http://localhost:5000',
+      '/api': 'http://localhost:5000',
+    },
+  },
 })
