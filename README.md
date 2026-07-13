@@ -60,10 +60,9 @@ Combined into **LQI Score** (0-100): Intent (40%) + Capacity (30%) + Credit (20%
 | **Bank Statement Analysis** | Parse transactions → income stability, EMI burden |
 | **Product Recommendation** | Auto-match intent + capacity to loan products |
 | **Priority Buckets** | High/Medium/Low sorting for RM prioritization |
-| **Batch Processing** | CSV upload, bulk prospect scoring |
+| **Batch Processing** | Bulk prospect addition and scoring |
 | **Manager Dashboard** | Branch-level conversion funnel analytics |
 | **Officer Auth** | Role-based login for RMs and Managers |
-| **Customer Portal** | Self-service registration and eligibility check |
 
 ---
 
@@ -106,15 +105,11 @@ npm run dev
 npm run build
 ```
 
-### Docker Deployment
+### Docker Deployment (Frontend)
 
 ```bash
-# Backend
-docker build -t idbi-backend ./backend
-docker run -p 5000:5000 idbi-backend
-
-# Frontend
-docker build -t idbi-frontend ./frontend
+cd frontend
+docker build -t idbi-frontend .
 docker run -p 8080:80 idbi-frontend
 ```
 
@@ -124,12 +119,12 @@ docker run -p 8080:80 idbi-frontend
 
 ### Core Scoring
 
-| Method | Endpoint | Description | Request Body |
-|--------|----------|-------------|--------------|
-| `POST` | `/score` | Single customer scoring | `{customer_id, monthly_inflow, consistency, fixed_obligations, credit_score, relationship_score}` |
-| `POST` | `/batch` | CSV batch scoring | `file: prospects.csv` |
-| `POST` | `/api/prospects/bulk` | Add + score prospects | `{prospects: [{name, email, phone, monthly_inflow, fixed_obligations, credit_score}]}` |
-| `GET` | `/api/prospects` | List all prospects | — |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/score` | Single customer scoring |
+| `POST` | `/batch` | CSV batch scoring |
+| `POST` | `/api/prospects/bulk` | Add + score prospects |
+| `GET` | `/api/prospects` | List all prospects |
 
 ### Bank Statement Analysis
 
@@ -143,8 +138,8 @@ docker run -p 8080:80 idbi-frontend
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/register` | Customer registration |
-| `POST` | `/api/login` | Customer login |
+| `POST` | `/api/register` | Prospect registration |
+| `POST` | `/api/login` | Prospect login |
 | `POST` | `/api/officer/login` | Bank officer login |
 
 ### Utility
@@ -207,10 +202,10 @@ curl -X POST http://localhost:5000/api/prospects/bulk \
                               │ REST API
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     BACKEND (Flask)                              │
+│                     BACKEND (Flask)                             │
 │  /api/prospects/bulk → Add + score leads                        │
 │  /score              → Single customer scoring                  │
-│  /api/bank-statement → Parse + analyze transactions            │
+│  /api/bank-statement → Parse + analyze transactions             │
 └─────────────────────────────────────────────────────────────────┘
           │                   │                   │
           ▼                   ▼                   ▼
@@ -325,10 +320,13 @@ idbi-prospect-assist/
 │   │   │   ├── ProspectListPage.tsx    # Main table view
 │   │   │   ├── ManagerDashboard.tsx    # Branch analytics
 │   │   │   ├── AddProspectsPage.tsx    # Add prospects form
-│   │   │   ├── LoginPage.tsx           # Customer login
-│   │   │   └── OfficerLoginPage.tsx    # Bank officer login
+│   │   │   ├── OfficerLoginPage.tsx    # Officer login
+│   │   │   ├── LoginPage.tsx           # Prospect login
+│   │   │   ├── RegisterPage.tsx        # Prospect registration
+│   │   │   └── HomePage.tsx            # Landing page
 │   │   └── components/
 │   │       ├── LeadTable.tsx           # Lead table component
+│   │       ├── BankStatementUpload.tsx # Bank statement upload
 │   │       └── ui/                      # shadcn components
 │   ├── package.json
 │   └── Dockerfile
@@ -377,7 +375,6 @@ idbi-prospect-assist/
 ### Phase 3: Channel Expansion (9 months)
 - WhatsApp Bot for field officers
 - RM Mobile App
-- Customer self-service portal
 
 ### Phase 4: Advanced Analytics (12 months)
 - Predictive NPA alerts (90-day warning)
