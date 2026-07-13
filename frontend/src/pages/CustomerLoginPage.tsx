@@ -21,7 +21,7 @@ export function CustomerLoginPage() {
     setError('')
 
     try {
-      const resp = await fetch(`${API_URL}/api/customer/login`, {
+      const resp = await fetch(`${API_URL}/customer/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)

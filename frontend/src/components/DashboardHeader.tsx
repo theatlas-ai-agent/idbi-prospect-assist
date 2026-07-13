@@ -6,7 +6,7 @@ interface DashboardHeaderProps {
   showNav?: boolean
 }
 
-export function DashboardHeader({ title, subtitle, showNav }: DashboardHeaderProps) {
+export function DashboardHeader({ title: _title, subtitle, showNav }: DashboardHeaderProps) {
   const location = useLocation()
   const isManager = location.pathname.startsWith('/manager')
 

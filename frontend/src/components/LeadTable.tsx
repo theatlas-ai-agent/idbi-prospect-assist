@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+// import { Badge } from "@/components/ui/badge" // ponytail: unused
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { DashboardHeader } from "@/components/DashboardHeader"
@@ -73,32 +73,6 @@ export function LeadTable() {
   const [loanType, setLoanType] = useState<string>("all")
   const [page, setPage] = useState(1)
   const pageSize = 10
-
-  const handleApply = async (lead: Lead) => {
-    try {
-      const resp = await fetch('/api/application/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id: lead.id.toString(),
-          customer_name: lead.name,
-          phone: lead.phone,
-          loan_type: lead.loan_type,
-          loan_amount: lead.suggested_loan_amount,
-          monthly_income: Math.round(lead.repayment_capacity / 0.5),
-          employment_type: 'salaried',
-          status: 'applied'
-        })
-      })
-      if (resp.ok) {
-        alert(`Application submitted for ${lead.name}!`)
-      } else {
-        alert('Application submission failed.')
-      }
-    } catch {
-      alert('Network error.')
-    }
-  }
 
   useEffect(() => {
     fetchLeads().then(data => {
@@ -257,8 +231,8 @@ export function LeadTable() {
                               <div>
                                 <p className="text-xs font-semibold text-blue-800 uppercase tracking-wide mb-2">Financials</p>
                                 <div className="space-y-1 text-gray-600">
-                                  <p>Disposable Income: <span className="font-medium text-gray-800">₹{lead.disposable_income.toLocaleString("en-IN")}</span></p>
-                                  <p>Affordable EMI: <span className="font-medium text-gray-800">₹{lead.affordable_emi.toLocaleString("en-IN")}</span></p>
+                                  <p>Disposable Income: <span className="font-medium text-gray-800">₹{(lead.disposable_income || 0).toLocaleString("en-IN")}</span></p>
+                                  <p>Affordable EMI: <span className="font-medium text-gray-800">₹{(lead.affordable_emi || 0).toLocaleString("en-IN")}</span></p>
                                   <p>Suggested Loan: <span className="font-medium text-gray-800">₹{(lead.suggested_loan_amount / 100000).toFixed(1)}L</span></p>
                                   <p>Confidence: <span className="font-medium text-gray-800">{lead.confidence}%</span></p>
                                 </div>
@@ -303,7 +277,7 @@ export function LeadTable() {
                                     {lead.bank_analysis && (
                                       <>
                                         <div className="space-y-0.5 text-xs text-gray-600">
-                                          <p>Avg Monthly Inflow: <span className="font-medium text-gray-800">₹{lead.bank_analysis.avg_monthly_inflow.toLocaleString("en-IN")}</span></p>
+                                          <p>Avg Monthly Inflow: <span className="font-medium text-gray-800">₹{(lead.bank_analysis.avg_monthly_inflow || 0).toLocaleString("en-IN")}</span></p>
                                           <p>EMI Count: <span className="font-medium text-gray-800">{lead.bank_analysis.emi_count}</span></p>
                                           <p>Savings Ratio: <span className="font-medium text-gray-800">{lead.bank_analysis.savings_ratio}%</span></p>
                                           <p>Liquidity Stress: <span className="font-medium text-gray-800">{lead.bank_analysis.liquidity_stress}%</span></p>
@@ -325,17 +299,6 @@ export function LeadTable() {
                                     )}
                                   </div>
                                 )}
-                                <div className="mt-4 flex gap-2">
-                                  <Button
-                                    className="bg-green-600 hover:bg-green-700 text-white text-sm"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleApply(lead)
-                                    }}
-                                  >
-                                    Apply Now
-                                  </Button>
-                                </div>
                               </div>
                             </div>
                           </TableCell>

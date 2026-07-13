@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { DashboardHeader } from '../components/DashboardHeader'
@@ -108,9 +109,9 @@ export function ManagerDashboard() {
               <p className="text-gray-600 text-sm mb-4">
                 View all uploaded prospects, their LQI scores, priority ratings, and repayment capacity. Track application status.
               </p>
-              <a href="/manager/list">
+              <Link to="/manager/list">
                 <Button variant="outline" className="w-full border-blue-900 text-blue-900 hover:bg-blue-50">View All Prospects</Button>
-              </a>
+              </Link>
             </CardContent>
           </Card>
         </div>

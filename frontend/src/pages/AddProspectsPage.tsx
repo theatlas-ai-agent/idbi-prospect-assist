@@ -136,9 +136,9 @@ export function AddProspectsPage() {
       credit_score: parseInt(r.credit_score) || 0
     })).filter(p => p.name && p.phone)
 
-    // If bank statement is available, enrich first prospect
+    // ponytail: attach bank statement to first prospect (backend expects this)
     if (transactions.length > 0 && prospects.length > 0) {
-      prospects[0] = { ...prospects[0], bank_statement: { transactions, summary: bankSummary } }
+      (prospects[0] as any).bank_statement = { transactions, summary: bankSummary }
     }
 
     if (prospects.length === 0) {
@@ -148,7 +148,7 @@ export function AddProspectsPage() {
     }
 
     try {
-      const resp = await fetch(`${API_URL}/api/prospects/bulk`, {
+      const resp = await fetch(`${API_URL}/prospects/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prospects })

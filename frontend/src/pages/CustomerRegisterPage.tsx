@@ -37,7 +37,7 @@ export function CustomerRegisterPage() {
     setError('')
 
     try {
-      const resp = await fetch(`${API_URL}/api/customer/register`, {
+      const resp = await fetch(`${API_URL}/customer/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

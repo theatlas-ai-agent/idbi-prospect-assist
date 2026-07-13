@@ -774,12 +774,14 @@ def bulk_prospects():
                 "customer_id": cid,
                 "name": p.get("name", ""),
                 "phone": p.get("phone", ""),
-                "monthly_inflow": p.get("monthly_inflow", 50000),
-                "fixed_obligations": p.get("fixed_obligations", 0),
-                "credit_score": p.get("credit_score", 70),
+                "monthly_inflow": p.get("monthly_inflow", 50000) or 50000,
+                "fixed_obligations": p.get("fixed_obligations", 0) or 0,
+                "credit_score": p.get("credit_score", 70) or 70,
                 "status": "new",
                 "bank_verified": False,
                 "bank_analysis": None,
+                "affordable_emi": 0,
+                "disposable_income": 0,
             }
             added += 1
 
@@ -850,6 +852,8 @@ def bulk_prospects():
 
                 PROSPECTS[cid]["lead_score"] = round(lead_score, 1)
                 PROSPECTS[cid]["repayment_capacity"] = round(max_loan, 0)
+                PROSPECTS[cid]["affordable_emi"] = round(emi, 0)
+                PROSPECTS[cid]["disposable_income"] = round(disposable, 0)
                 PROSPECTS[cid]["priority"] = c.lead_scorer.prioritize(lead_score)
                 PROSPECTS[cid]["intent_scores"] = {"personal": intent, "home": intent, "auto": intent, "mortgage": intent}
                 PROSPECTS[cid]["recommended_product"] = rec.get("loan_type", "Personal Loan")
