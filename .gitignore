@@ -81,4 +81,4 @@ temp/
 secrets.json
 
 #playwright
-.playwright-mcps
+.playwright-mcp
