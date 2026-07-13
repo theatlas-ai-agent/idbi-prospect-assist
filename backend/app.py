@@ -9,6 +9,7 @@ import pandas as pd
 import csv
 import io
 import logging
+import secrets
 from pathlib import Path
 
 # ponytail: basic logging for demo debugging
@@ -29,6 +30,11 @@ from services.repayment_engine import (
 )
 from services.lead_scorer import LeadScorer
 from services.product_recommender import ProductRecommender
+from services.bank_statement_analyzer import parse_statement, extract_income, calculate_cashflow
+from services.behavioral_scorer import track_event, get_behavior_score, get_signals as get_customer_signals
+from services.conversion_tracker import track_stage, get_funnel_metrics, get_conversion_rate
+from services.income_verifier import verify_income, ConfidenceLevel
+from services.eligibility_checker import check_eligibility, get_eligible_products, PRODUCT_REQUIREMENTS
 
 
 # =============================================================================
@@ -67,7 +73,205 @@ def health():
 @app.get("/")
 def index():
     """API root endpoint"""
-    return jsonify({"service": "idbi-scoring-api", "version": "1.0", "endpoints": ["/health", "/score", "/leads"]})
+    return jsonify({"service": "idbi-scoring-api", "version": "1.0", "endpoints": ["/health", "/score", "/leads", "/api/register", "/api/login"]})
+
+
+# =============================================================================
+# Auth Endpoints
+# =============================================================================
+
+from models.user import (
+    create_user, authenticate_user, generate_token, 
+    verify_token, get_user_by_email, user_to_response
+)
+
+@app.post("/api/register")
+def register():
+    """Register new user"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "JSON body required"}), 400
+        
+        user = create_user(
+            full_name=data.get('full_name', ''),
+            email=data.get('email', '').lower(),
+            phone=data.get('phone', ''),
+            password=data.get('password', ''),
+            pan_number=data.get('pan_number'),
+            aadhaar_number=data.get('aadhaar_number')
+        )
+        
+        token = generate_token(user['email'])
+        
+        logger.info(f"User registered: {user['email']}")
+        
+        return jsonify({
+            "message": "Registration successful",
+            "token": token,
+            "user": user_to_response(user)
+        }), 201
+        
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Registration error: {e}")
+        return jsonify({"error": "Registration failed"}), 500
+
+
+@app.post("/api/login")
+def login():
+    """Login user"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "JSON body required"}), 400
+        
+        email = data.get('email', '').lower()
+        password = data.get('password', '')
+        
+        user = authenticate_user(email, password)
+        if not user:
+            return jsonify({"error": "Invalid email or password"}), 401
+        
+        token = generate_token(user['email'])
+        
+        logger.info(f"User logged in: {email}")
+        
+        return jsonify({
+            "message": "Login successful",
+            "token": token,
+            "user": user_to_response(user)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return jsonify({"error": "Login failed"}), 500
+
+
+@app.get("/api/me")
+def me():
+    """Get current user"""
+    auth_header = request.headers.get('Authorization', '')
+    token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else None
+    
+    if not token:
+        return jsonify({"error": "Authorization required"}), 401
+    
+    email = verify_token(token)
+    if not email:
+        return jsonify({"error": "Invalid token"}), 401
+    
+    user = get_user_by_email(email)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    return jsonify({"user": user_to_response(user)}), 200
+
+
+# =============================================================================
+# Customer Auth
+# =============================================================================
+
+from models.user import create_user as create_customer, authenticate_user as auth_customer
+
+@app.post("/api/customer/register")
+def customer_register():
+    """Register new customer"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "JSON body required"}), 400
+        
+        user = create_customer(
+            full_name=data.get('full_name', ''),
+            email=data.get('email', '').lower(),
+            phone=data.get('phone', ''),
+            password=data.get('password', '')
+        )
+        
+        token = generate_token(user['email'])
+        
+        return jsonify({
+            "message": "Registration successful",
+            "token": token,
+            "customer": user_to_response(user)
+        }), 201
+        
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Customer registration error: {e}")
+        return jsonify({"error": "Registration failed"}), 500
+
+
+@app.post("/api/customer/login")
+def customer_login():
+    """Login customer"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "JSON body required"}), 400
+        
+        email = data.get('email', '').lower()
+        password = data.get('password', '')
+        
+        user = auth_customer(email, password)
+        if not user:
+            return jsonify({"error": "Invalid email or password"}), 401
+        
+        token = generate_token(user['email'])
+        
+        return jsonify({
+            "message": "Login successful",
+            "token": token,
+            "customer": user_to_response(user)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Customer login error: {e}")
+        return jsonify({"error": "Login failed"}), 500
+
+
+# =============================================================================
+# Officer Auth
+# =============================================================================
+
+# ponytail: in-memory officer store (replace with DB in prod)
+_officers = {
+    'EMP001': {'id': 'EMP001', 'name': 'Rajesh Kumar', 'role': 'Senior Manager', 'password': 'officer123'},
+    'EMP002': {'id': 'EMP002', 'name': 'Priya Sharma', 'role': 'Loan Officer', 'password': 'officer123'},
+    'MGR001': {'id': 'MGR001', 'name': 'Amit Patel', 'role': 'Prospect Manager', 'password': 'manager123'},
+}
+_officer_tokens = {}
+
+@app.post("/api/officer/login")
+def officer_login():
+    """Login bank officer"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "JSON body required"}), 400
+        
+        emp_id = data.get('employeeId', '').upper()
+        password = data.get('password', '')
+        
+        officer = _officers.get(emp_id)
+        if not officer or officer['password'] != password:
+            return jsonify({"error": "Invalid Employee ID or password"}), 401
+        
+        token = secrets.token_urlsafe(32)
+        _officer_tokens[token] = emp_id
+        
+        return jsonify({
+            "message": "Login successful",
+            "token": token,
+            "officer": {'id': officer['id'], 'name': officer['name'], 'role': officer['role']}
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Officer login error: {e}")
+        return jsonify({"error": "Login failed"}), 500
 
 
 # ponytail: validation helper
@@ -295,6 +499,270 @@ def batch():
     })
 
 
+# =============================================================================
+# New Feature Endpoints
+# =============================================================================
+
+@app.post("/api/bank-statement/parse")
+def parse_bank_statement():
+    """Parse bank statement PDF/CSV and extract income analysis."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "File required"}), 400
+        
+        file = request.files['file']
+        content = file.stream.read().decode('utf-8', errors='ignore')
+        file_type = 'csv' if file.filename.endswith('.csv') else 'txt'
+        
+        result = parse_statement(content, file_type)
+        
+        return jsonify({
+            "total_credits": result.total_credits,
+            "total_debits": result.total_debits,
+            "avg_monthly_inflow": round(result.avg_monthly_inflow, 2),
+            "detected_emis": result.detected_emis,
+            "transaction_count": result.transaction_count,
+            "analysis": {
+                "monthly_inflow": round(result.analysis.monthly_inflow, 2),
+                "monthly_outflow": round(result.analysis.monthly_outflow, 2),
+                "net_cashflow": round(result.analysis.net_cashflow, 2),
+                "income_stability_score": round(result.analysis.income_stability_score, 1),
+                "income_sources": result.analysis.income_sources
+            }
+        })
+    except Exception as e:
+        logger.error(f"Bank statement parse error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/behavior/track")
+def track_customer_event():
+    """Track customer behavioral event (portal visit, doc upload, etc)."""
+    try:
+        data = request.get_json()
+        customer_id = data.get('customer_id')
+        event_type = data.get('event_type')
+        metadata = data.get('metadata', {})
+        
+        track_event(customer_id, event_type, metadata)
+        
+        return jsonify({"status": "tracked", "customer_id": customer_id, "event": event_type})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/behavior/<customer_id>")
+def get_behavior(customer_id):
+    """Get behavioral score for customer."""
+    try:
+        score = get_behavior_score(customer_id)
+        signals = get_customer_signals(customer_id)
+        
+        return jsonify({
+            "customer_id": customer_id,
+            "behavior_score": score,
+            "signals": signals
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/funnel/metrics")
+def funnel_metrics():
+    """Get conversion funnel metrics."""
+    try:
+        metrics = get_funnel_metrics()
+        # Calculate overall conversion rate
+        conversion = get_conversion_rate("registered", "disbursed") if metrics.get("registered", 0) > 0 else 0.0
+        
+        return jsonify({
+            "funnel": metrics,
+            "conversion_rate": round(conversion, 2)
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/income/verify")
+def verify_customer_income():
+    """Verify declared income against bank statement."""
+    try:
+        data = request.get_json()
+        declared_income = data.get('declared_income', 0)
+        bank_totals = data.get('bank_statement_totals', [])
+        income_sources = data.get('income_sources_count', 1)
+        consistent = data.get('has_consistent_deposits', True)
+        
+        result = verify_income(declared_income, bank_totals, income_sources, consistent)
+        
+        return jsonify({
+            "declared_income": result.declared_income,
+            "actual_income": round(result.actual_income, 2),
+            "variance_percent": round(result.variance_percent, 2),
+            "discrepancy_flagged": result.discrepancy_flagged,
+            "confidence": result.confidence.value,
+            "confidence_factors": result.confidence_factors
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/eligibility/check")
+def check_product_eligibility():
+    """Check eligibility for loan products."""
+    try:
+        data = request.get_json()
+        income = data.get('income', 0)
+        dti = data.get('dti', 0.5)
+        credit_score = data.get('credit_score', 0)
+        age = data.get('age', 18)
+        
+        eligible = get_eligible_products(income, dti, credit_score, age)
+        
+        return jsonify({
+            "income": income,
+            "dti": dti,
+            "credit_score": credit_score,
+            "age": age,
+            "eligible_products": eligible,
+            "requirements": PRODUCT_REQUIREMENTS
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/funnel/track")
+def track_customer_stage():
+    """Track customer through conversion funnel."""
+    try:
+        data = request.get_json()
+        customer_id = data.get('customer_id')
+        stage = data.get('stage')
+
+        track_stage(customer_id, stage)
+
+        return jsonify({"status": "tracked", "customer_id": customer_id, "stage": stage})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ponytail: in-memory app store, add db when persistence matters
+APPLICATIONS: dict[str, dict] = {}
+PROSPECTS: dict[str, dict] = {}  # ponytail: store added prospects
+
+@app.post("/api/prospects/bulk")
+def bulk_prospects():
+    """Add multiple prospects and score them."""
+    try:
+        data = request.get_json()
+        prospects_list = data.get("prospects", [])
+        if not prospects_list:
+            return jsonify({"error": "No prospects"}), 400
+        
+        c = Container.get()
+        added, scored = 0, 0
+        
+        for p in prospects_list:
+            cid = p.get("customer_id") or p.get("email")
+            if not cid:
+                continue
+            
+            PROSPECTS[cid] = {
+                "customer_id": cid,
+                "name": p.get("name", ""),
+                "phone": p.get("phone", ""),
+                "monthly_inflow": p.get("monthly_inflow", 50000),
+                "fixed_obligations": p.get("fixed_obligations", 0),
+                "credit_score": p.get("credit_score", 70),
+                "status": "new"
+            }
+            added += 1
+            
+            try:
+                monthly = p.get("monthly_inflow", 50000)
+                fixed = p.get("fixed_obligations", 0)
+                consistency = p.get("consistency", 0.85)
+                credit = p.get("credit_score", 70)
+                
+                stable = compute_stable_income(monthly, consistency)
+                disposable = compute_disposable_income(stable, fixed)
+                emi = compute_affordable_emi(disposable)
+                max_loan = compute_max_loan(emi)
+                dti = compute_dti(emi, stable)
+                capacity = min(dti * 100, 100) if dti <= 1 else 0
+                
+                lead_score = c.lead_scorer.score(
+                    intent=50, capacity=capacity, credit=credit, relationship=60
+                )
+                PROSPECTS[cid]["lead_score"] = round(lead_score, 1)
+                PROSPECTS[cid]["repayment_capacity"] = round(max_loan, 0)
+                PROSPECTS[cid]["priority"] = c.lead_scorer.prioritize(lead_score)
+                scored += 1
+            except Exception as e:
+                logger.warning(f"Score failed: {e}")
+        
+        return jsonify({"added": added, "scored": scored, "total": len(PROSPECTS)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.get("/api/prospects")
+def list_prospects():
+    return jsonify({"prospects": list(PROSPECTS.values()), "total": len(PROSPECTS)})
+
+@app.post("/api/application/submit")
+def submit_application():
+    """Submit loan application. ponytail: stores in-memory, no db."""
+    try:
+        data = request.get_json()
+        customer_id = data.get('customer_id')
+        loan_type = data.get('loan_type')
+        amount = data.get('amount')
+        income = data.get('income')
+        credit_score = data.get('credit_score', 700)
+        purpose = data.get('purpose')
+        bank_statement = data.get('bank_statement', '')
+
+        app_id = f"APP-{secrets.token_hex(4).upper()}"
+        track_stage(customer_id, 'applied')
+
+        APPLICATIONS[app_id] = {
+            "application_id": app_id,
+            "customer_id": customer_id,
+            "loan_type": loan_type,
+            "amount": amount,
+            "income": income,
+            "credit_score": credit_score,
+            "purpose": purpose,
+            "status": "submitted",
+            "created_at": __import__('datetime').datetime.utcnow().isoformat()
+        }
+
+        return jsonify({
+            "application_id": app_id,
+            "status": "submitted",
+            "customer_id": customer_id,
+            "loan_type": loan_type,
+            "amount": amount,
+            "eligible": credit_score >= 650 and income >= 20000
+        }), 201
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/applications/<customer_id>")
+def get_applications(customer_id: str):
+    """Get all applications for a customer. ponytail: in-memory filter."""
+    apps = [a for a in APPLICATIONS.values() if a.get('customer_id') == customer_id]
+    return jsonify({"applications": apps, "total": len(apps)})
+
+
+@app.get("/api/applications")
+def list_all_applications():
+    """Get all applications for officer dashboard. ponytail: no pagination yet."""
+    return jsonify({"applications": list(APPLICATIONS.values()), "total": len(APPLICATIONS)})
+
+
 @app.get("/leads")
 def leads():
     """Return leads for dashboard. ponytail: generates 20 sample leads.
@@ -369,6 +837,26 @@ def leads():
     # ponytail: seed High priority leads for testing
 
     
+    # ponytail: merge real prospects from manager uploads
+    for pid, p in PROSPECTS.items():
+        leads_list.append({
+            "id": p.get("id", pid),
+            "name": p.get("name", pid),
+            "phone": p.get("phone", ""),
+            "lead_score": round(p.get("lead_score", 0), 1),
+            "priority": p.get("priority", "Low"),
+            "repayment_capacity": round(p.get("repayment_capacity", 0), 0),
+            "disposable_income": round(p.get("disposable_income", 0), 0),
+            "affordable_emi": round(p.get("affordable_emi", 0), 0),
+            "suggested_loan_amount": round(p.get("suggested_loan_amount", 0), 0),
+            "recommended_product": p.get("recommended_product", "Personal Loan"),
+            "loan_type": p.get("loan_type", "Personal"),
+            "intent_scores": p.get("intent_scores", {"home": 0, "auto": 0, "personal": 0, "business": 0}),
+            "confidence": round(p.get("confidence", 80), 1),
+            "reasons": p.get("reasons", ["Stable income profile", "Good repayment history"]),
+            "rank": 0,
+        })
+
     # Sort by lead_score desc
     leads_list.sort(key=lambda x: x["lead_score"], reverse=True)
     for i, lead in enumerate(leads_list):

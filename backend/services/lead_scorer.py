@@ -19,12 +19,17 @@ class LeadScorer:
 
     def score(self, intent: float, capacity: float, credit: float, relationship: float) -> float:
         """Weighted lead score 0-100."""
-        return (
+        # ponytail: clamp inputs to 0-100, then cap result
+        intent = max(0, min(100, intent))
+        capacity = max(0, min(100, capacity))
+        credit = max(0, min(100, credit))
+        relationship = max(0, min(100, relationship))
+        return min(100, (
             intent * _WEIGHTS.intent +
             capacity * _WEIGHTS.capacity +
             credit * _WEIGHTS.credit +
             relationship * _WEIGHTS.relationship
-        )
+        ))
 
     def prioritize(self, lead_score: float) -> str:
         """Map score to priority bucket."""
