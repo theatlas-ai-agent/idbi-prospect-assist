@@ -27,6 +27,7 @@ from services.repayment_engine import (
     compute_affordable_emi,
     compute_max_loan,
     compute_dti,
+    check_age_eligibility,
 )
 from services.lead_scorer import LeadScorer
 from services.product_recommender import ProductRecommender
@@ -325,12 +326,16 @@ def score():
     
         # ponytail: use provided inflow, skip transaction feature extraction
         monthly_inflow = data.get("monthly_inflow", 50000)
+        monthly_salary = data.get("monthly_salary")
+        if monthly_salary is not None:
+            monthly_inflow = monthly_salary
         features = {}
 
         # Repayment capacity
         consistency = data.get("consistency", 0.85)
         fixed_obligations = data.get("fixed_obligations", 15000)
-        
+        dob = data.get("dob")
+
         stable_income = compute_stable_income(monthly_inflow, consistency)
         disposable = compute_disposable_income(stable_income, fixed_obligations)
         affordable_emi = compute_affordable_emi(disposable)
@@ -446,6 +451,9 @@ def score():
         recommendation["tenure_years"] = tenure_years
         recommendation["max_loan"] = round(max_loan, 0)
 
+        # Age eligibility check
+        age_eligible, age_reason = check_age_eligibility(dob, tenure_years=tenure_years) if dob else (None, None)
+
         return jsonify({
             "customer_id": customer_id,
             "bank_verified": bank_verified,
@@ -461,6 +469,8 @@ def score():
                 "affordable_emi": round(affordable_emi, 0),
                 "max_loan": round(max_loan, 0),
                 "dti": round(dti, 3),
+                "age_eligible": age_eligible,
+                "age_eligibility": age_reason,
             },
             "recommendation": recommendation,
         })
@@ -806,16 +816,34 @@ def bulk_prospects():
                 }
 
             try:
-                monthly = p.get("monthly_inflow", 50000)
+                monthly_salary = p.get("monthly_salary")
+                monthly = monthly_salary if monthly_salary is not None else p.get("monthly_inflow", 50000)
                 fixed = p.get("fixed_obligations", 0)
                 consistency = p.get("consistency", 0.85)
                 credit = p.get("credit_score", 70)
+                dob = p.get("dob")
 
                 stable = compute_stable_income(monthly, consistency)
                 disposable = compute_disposable_income(stable, fixed)
                 emi = compute_affordable_emi(disposable)
-                max_loan = compute_max_loan(emi)
                 dti = compute_dti(emi, stable)
+
+                # Age eligibility
+                age_eligible, age_reason = check_age_eligibility(dob) if dob else (None, None)
+
+                PROSPECTS[cid]["age_eligible"] = age_eligible
+                PROSPECTS[cid]["age_eligibility"] = age_reason
+
+                # Compute product-specific max loans (FOIR already baked into affordable_emi)
+                product_max_loans = {
+                    "personal_loan": compute_max_loan(emi, loan_type="personal_loan", dti=None),
+                    "home_loan": compute_max_loan(emi, loan_type="home_loan", dti=None),
+                    "auto_loan": compute_max_loan(emi, loan_type="auto_loan", dti=None),
+                    "mortgage_loan": compute_max_loan(emi, loan_type="mortgage_loan", dti=None),
+                }
+                # Pick product with highest intent (all equal in bulk, tie-break by highest max_loan)
+                best_product = max(product_max_loans, key=lambda k: product_max_loans[k])
+                max_loan = product_max_loans[best_product]
                 capacity = max(0, min(100, (0.50 - dti) / 0.50 * 100)) if dti <= 0.50 else 0
 
                 # ponytail: apply bank analysis multiplier to capacity
@@ -856,10 +884,10 @@ def bulk_prospects():
                 PROSPECTS[cid]["disposable_income"] = round(disposable, 0)
                 PROSPECTS[cid]["priority"] = c.lead_scorer.prioritize(lead_score)
                 PROSPECTS[cid]["intent_scores"] = {"personal": intent, "home": intent, "auto": intent, "mortgage": intent}
-                PROSPECTS[cid]["recommended_product"] = rec.get("loan_type", "Personal Loan")
+                PROSPECTS[cid]["recommended_product"] = best_product.replace("_", " ").title()
                 PROSPECTS[cid]["confidence"] = round(confidence, 2)
                 PROSPECTS[cid]["reasons"] = reasons
-                PROSPECTS[cid]["loan_type"] = rec.get("loan_type", "Personal Loan")
+                PROSPECTS[cid]["loan_type"] = best_product.replace("_", " ").title()
                 PROSPECTS[cid]["suggested_loan_amount"] = round(max_loan, 0)
                 scored += 1
             except Exception as e:
@@ -935,31 +963,40 @@ def list_all_applications():
 
 @app.get("/leads")
 def leads():
-    """Return leads for dashboard. ponytail: generates 20 sample leads.
-    
-    Output: [{id, name, phone, lead_score, priority, repayment_capacity, ...}]
+    """Return leads for officer dashboard.
+    If PROSPECTS has been seeded (from /leads auto-seed), returns that data.
+    Otherwise generates 20 sample leads.
     """
     c = Container.get()
+    if PROSPECTS:
+        return jsonify(list(PROSPECTS.values()))
+
     import random
-    random.seed(42)  # ponytail: stable demo data
-    
-    names = ["Rajesh Kumar", "Priya Sharma", "Amit Patel", "Sneha Reddy", 
+    random.seed(42)
+    names = ["Rajesh Kumar", "Priya Sharma", "Amit Patel", "Sneha Reddy",
              "Vikram Singh", "Anita Desai", "Rohan Mehta", "Kavita Nair"]
     loan_types = ["Home", "Auto", "Personal", "Business"]
-    
     leads_list = []
     for i in range(20):
         monthly = random.randint(40000, 120000)
         consistency = random.uniform(0.7, 0.95)
         fixed = random.randint(8000, 30000)
-        credit = random.randint(60, 90)
+        credit = random.randint(650, 850)
+        # Generate realistic DOB (age 25-55)
+        age = random.randint(25, 55)
+        dob_year = 2026 - age
+        dob_month = random.randint(1, 12)
+        dob_day = random.randint(1, 28)
+        dob = f"{dob_year}-{dob_month:02d}-{dob_day:02d}"
         
         stable = compute_stable_income(monthly, consistency)
         disposable = compute_disposable_income(stable, fixed)
         emi = compute_affordable_emi(disposable)
-        max_loan = compute_max_loan(emi)
         dti = compute_dti(emi, stable)
         capacity_score = max(0, min(100, (0.50 - dti) / 0.50 * 100)) if dti <= 0.50 else 0
+
+        # Age eligibility
+        age_eligible, age_reason = check_age_eligibility(dob)
         
         intent = {
             "personal": random.randint(30, 80),
@@ -967,7 +1004,15 @@ def leads():
             "auto": random.randint(25, 75),
             "mortgage": random.randint(15, 50),
         }
-        
+
+        # Per-product max loans using product-specific rates and tenures
+        product_loans = {
+            "personal": compute_max_loan(emi, loan_type="personal_loan"),
+            "home": compute_max_loan(emi, loan_type="home_loan"),
+            "auto": compute_max_loan(emi, loan_type="auto_loan"),
+            "mortgage": compute_max_loan(emi, loan_type="mortgage"),
+        }
+
         max_intent = max(intent["personal"], intent["home"], intent["auto"], intent["mortgage"])
         lead_score = c.lead_scorer.score(
             intent=max_intent,
@@ -976,33 +1021,38 @@ def leads():
             relationship=random.randint(50, 80),
         )
         priority = c.lead_scorer.prioritize(lead_score)
-        
-        loan_type = max(intent, key=intent.get)
-        loan_type_cap = loan_type.capitalize()
-        if loan_type_cap not in loan_types:
-            loan_type_cap = "Personal"
-        
+
+        # Recommended product based on highest intent
+        recommended = max(intent, key=intent.get)
+        loan_type_map = {"personal": "Personal", "home": "Home", "auto": "Auto", "mortgage": "Mortgage"}
+        loan_type_cap = loan_type_map.get(recommended, "Personal")
+        product_max_loan = product_loans[recommended]
+
         leads_list.append({
             "id": i + 1,
             "name": names[i % len(names)],
             "phone": f"+91 {random.randint(70000, 99999)} {random.randint(10000, 99999)}",
+            "dob": dob,
+            "monthly_salary": monthly,
             "lead_score": round(lead_score, 1),
             "priority": priority,
-            "repayment_capacity": round(max_loan, 0),
+            "repayment_capacity": round(product_max_loan, 0),
             "disposable_income": round(disposable, 0),
             "affordable_emi": round(emi, 0),
-            "suggested_loan_amount": round(max_loan, 0),
+            "suggested_loan_amount": round(product_max_loan, 0),
             "recommended_product": f"{loan_type_cap} Loan",
             "loan_type": loan_type_cap,
             "intent_scores": {
                 "home": intent["home"],
                 "auto": intent["auto"],
                 "personal": intent["personal"],
-                "business": intent["mortgage"],
+                "mortgage": intent["mortgage"],
             },
             "confidence": round(random.uniform(70, 95), 1),
             "reasons": ["Stable income profile", f"Credit score: {credit}", "Good repayment history"][:random.randint(1, 3)],
             "rank": i + 1,
+            "age_eligible": age_eligible,
+            "age_eligibility": age_reason,
         })
     
     # ponytail: seed High priority leads for testing
@@ -1014,6 +1064,7 @@ def leads():
             "id": p.get("id", pid),
             "name": p.get("name", pid),
             "phone": p.get("phone", ""),
+            "credit_score": p.get("credit_score", 750),
             "lead_score": round(p.get("lead_score", 0), 1),
             "priority": p.get("priority", "Low"),
             "repayment_capacity": round(p.get("repayment_capacity", 0), 0),
@@ -1107,6 +1158,16 @@ C003,35000,0.75,10000,65,55
         print(f"[OK] POST /batch: processed={batch_result['processed']}, top_leads={len(batch_result['top_leads'])}")
         assert batch_result["processed"] == 3
         assert len(batch_result["top_leads"]) <= 10
+
+        # Seed PROSPECTS from /leads so manager dashboard has data on first load
+        resp_leads = client.get("/leads")
+        if resp_leads.status_code == 200:
+            leads = resp_leads.json
+            PROSPECTS.clear()  # avoid duplicates on restart
+            for lead in leads:
+                lead["customer_id"] = f"DEMO-{lead['id']:03d}"
+                PROSPECTS[lead["customer_id"]] = lead
+            print(f"[OK] Seeded {min(len(leads), 20)} demo prospects into PROSPECTS")
 
     # Output for parent agent
     output = {
